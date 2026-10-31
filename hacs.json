@@ -1,7 +1,7 @@
 {
-  "name": "DomHouse Centro Controllo Batterie Card",
+  "name": "DomHouse Energy Horseshoe Card",
   "content_in_root": true,
-  "filename": "domhouse-battery-card.js",
+  "filename": "domhouse-energy-horseshoe-card.js",
   "render_readme": true,
   "homeassistant": "2024.1.0"
 }
