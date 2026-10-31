@@ -1,6 +1,6 @@
 /*
  * DomHouse Energy Horseshoe Card — LitElement
- * Gauge a ferro di cavallo per il fotovoltaico. Replica estetica di flex-horseshoe-card.
+ * Gauge a ferro di cavallo per il fotovoltaico.
  * custom:domhouse-energy-horseshoe
  * v0.4.0 — DomHouse.it
  */
