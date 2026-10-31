@@ -436,7 +436,7 @@ window.customCards.push({
   name: "DomHouse Energy Horseshoe",
   description: "Ferro di cavallo per la produzione fotovoltaica (DomHouse.it).",
   preview: false,
-  documentationURL: "https://domhouse.it",
+  documentationURL: "https://github.com/SalvatoreITA/DomHouse-Energy-Horseshoe-Card/",
 });
 
 customElements.define("domhouse-energy-horseshoe", DomHouseEnergyHorseshoe);
