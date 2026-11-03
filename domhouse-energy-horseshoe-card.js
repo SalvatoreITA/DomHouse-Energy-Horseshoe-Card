@@ -2,7 +2,7 @@
  * DomHouse Energy Horseshoe Card — LitElement
  * Gauge a ferro di cavallo per il fotovoltaico.
  * custom:domhouse-energy-horseshoe
- * v0.4.0 — DomHouse.it
+ * v0.4.2 — DomHouse.it
  */
 
 // Drop-in SENZA build (import ESM da CDN). Se bundli con rollup, usa invece: import { LitElement, html, css, svg } from "lit";
@@ -12,18 +12,35 @@ const n = (v, d) => (v == null || isNaN(Number(v)) ? d : Number(v));
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const lerp = (a, b, t) => a + (b - a) * t;
 
-// Risolve qualsiasi colore CSS (nome/hex/rgb) in [r,g,b].
+// Risolve variabili CSS var(--xxx) prima di passarle al canvas
+function resolveCssColor(color) {
+  if (!color || typeof color !== "string") return "#000000";
+  const trimmed = color.trim();
+  if (trimmed.startsWith("var(")) {
+    const match = trimmed.match(/var\(\s*(--[^,\s)]+)\s*(?:,\s*([^)]+))?\)/);
+    if (match) {
+      const val = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
+      if (val) return val;
+      if (match[2]) return resolveCssColor(match[2].trim());
+    }
+    return "#4caf50";
+  }
+  return trimmed;
+}
+
+// Risolve qualsiasi colore CSS (nome/hex/rgb/var) in [r,g,b].
 const _cvs = document.createElement("canvas").getContext("2d");
 const _colorCache = {};
 function toRgb(color) {
-  if (_colorCache[color]) return _colorCache[color];
-  _cvs.fillStyle = "#000";
-  _cvs.fillStyle = color;
+  const resolved = resolveCssColor(color);
+  if (_colorCache[resolved]) return _colorCache[resolved];
+  _cvs.fillStyle = "#000000";
+  _cvs.fillStyle = resolved;
   const s = _cvs.fillStyle;
   const rgb = s[0] === "#"
     ? [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)]
     : (s.match(/\d+(\.\d+)?/g) || [0, 0, 0]).slice(0, 3).map(Number);
-  _colorCache[color] = rgb;
+  _colorCache[resolved] = rgb;
   return rgb;
 }
 function toHex(color) {
@@ -72,11 +89,13 @@ class DomHouseEnergyHorseshoe extends LitElement {
     };
     this._stops = Object.keys(this._config.color_stops)
       .map((k) => ({ stop: Number(k), color: this._config.color_stops[k] }))
+      .filter((s) => !isNaN(s.stop))
       .sort((a, b) => a.stop - b.stop);
   }
 
   // Formatta come l'originale: toFixed (punto decimale), niente separatore migliaia.
   _fmt(ent) {
+    if (!ent || !ent.entity) return { num: null, text: "—", unit: "" };
     const st = this.hass && this.hass.states[ent.entity];
     if (!st || ["unavailable", "unknown"].includes(st.state) || st.state === undefined) {
       return { num: null, text: "—", unit: "" };
@@ -117,18 +136,16 @@ class DomHouseEnergyHorseshoe extends LitElement {
     return this._stateTpl(this._fmt(ent), 40, yPct, 1.5, "start", ent);
   }
 
-  _iconFO(ent, yPct) {
+  // Overlay HTML posizionato in % sopra l'SVG (100% compatibile con Safari/iOS WebKit)
+  _iconOverlay(ent, yPct) {
     if (!ent || !ent.entity || !ent.icon) return "";
-    const w = 1.5 * 12; // 1.5em @ 12px base = 18 unità
-    const x = 0.37 * 200 - w;              // right-align a 37%
-    const y = (yPct / 100) * 200 - w * 0.85; // centrato verticalmente sulla riga
-    return svg`
-      <foreignObject x="${x}" y="${y}" width="${w}" height="${w}" class="clickable"
-        @click=${(ev) => this._tap(ent, ev)} style="overflow:visible;">
-        <div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
-          <ha-icon icon="${ent.icon}" style="--mdc-icon-size:${w}px;width:${w}px;height:${w}px;color:var(--primary-text-color);"></ha-icon>
-        </div>
-      </foreignObject>`;
+    const topPct = yPct - 7.65;
+    return html`
+      <div class="icon-ov clickable"
+        style="top: ${topPct}%;"
+        @click=${(ev) => this._tap(ent, ev)}>
+        <ha-icon .icon=${ent.icon}></ha-icon>
+      </div>`;
   }
 
   render() {
@@ -136,7 +153,8 @@ class DomHouseEnergyHorseshoe extends LitElement {
     const e = this._config.entities;
     const g = this._geo;
     const primary = this._fmt(e[0]);
-    const { min, max } = this._config.scale;
+    const min = n(this._config.scale.min, 0);
+    const max = n(this._config.scale.max, 100);
     const f = primary.num == null ? 0 : clamp01((primary.num - min) / ((max - min) || 1));
     const col = primary.num == null ? this._config.scale.color : colorAt(primary.num, this._stops);
 
@@ -160,21 +178,22 @@ class DomHouseEnergyHorseshoe extends LitElement {
               transform="rotate(${rot} 100 100)"></circle>
             <circle class="bar" cx="100" cy="100" r=${R} fill="none"
               stroke=${col} stroke-width=${g.width}
-              stroke-linecap="round" stroke-dasharray="${barLen} ${C * 2}"
+              stroke-linecap=${barLen > 0.5 ? "round" : "butt"}
+              style="opacity: ${barLen > 0.001 ? 1 : 0};"
+              stroke-dasharray="${barLen} ${C * 2}"
               transform="rotate(${rot} 100 100)"></circle>
 
             <line class="divider" x1="60" y1="84" x2="140" y2="84"></line>
 
             ${this._stateTpl(primary, 50, 34, 3, "middle", e[0])}
 
-            ${this._iconFO(e[1], 57)}
             ${this._rowTpl(e[1], 57)}
-
-            ${this._iconFO(e[2], 72)}
             ${this._rowTpl(e[2], 72)}
 
             <text class="nam" x="50%" y="95%" style="font-size:1.5em;">${title}</text>
           </svg>
+          ${this._iconOverlay(e[1], 57)}
+          ${this._iconOverlay(e[2], 72)}
         </div>
       </ha-card>`;
   }
@@ -200,11 +219,15 @@ class DomHouseEnergyHorseshoe extends LitElement {
 
   static get styles() {
     return css`
-      :host { cursor: pointer; }
+      :host { cursor: pointer; display: block; }
       ha-card { padding: 10px 10px 0px 10px; box-sizing: border-box; font-size: 12px; }
-      .wrap { position: relative; width: 100%; }
-      svg { width: 100%; height: auto; display: block; overflow: visible; }
-      .bar { transition: stroke-dasharray 2.5s ease-out, stroke 0.3s; }
+      .wrap {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+      }
+      svg { width: 100%; height: 100%; display: block; overflow: visible; }
+      .bar { transition: stroke-dasharray 2.5s ease-out, stroke 0.3s, opacity 0.3s; }
       .sv { fill: var(--primary-text-color); }
       .su { fill: var(--primary-text-color); opacity: 0.7; }
       .nam {
@@ -213,6 +236,25 @@ class DomHouseEnergyHorseshoe extends LitElement {
       }
       .divider { stroke: var(--primary-text-color); stroke-width: 5; stroke-linecap: round; opacity: 0.7; }
       .clickable { cursor: pointer; }
+      .icon-ov {
+        position: absolute;
+        left: 28%;
+        width: 9%;
+        height: 9%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--primary-text-color);
+        pointer-events: auto;
+      }
+      .icon-ov ha-icon {
+        --mdc-icon-size: 100%;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
     `;
   }
 }
@@ -245,9 +287,13 @@ class DomHouseEnergyHorseshoeEditor extends LitElement {
 
   setConfig(config) {
     this._config = config || {};
-    this._stopsArr = Object.keys(this._config.color_stops || {})
-      .map((k) => ({ stop: Number(k), color: this._config.color_stops[k] }))
-      .sort((a, b) => a.stop - b.stop);
+    if (!this._editingStops) {
+      this._stopsArr = Object.keys(this._config.color_stops || {})
+        .map((k) => ({ stop: Number(k), color: this._config.color_stops[k] }))
+        .filter((s) => !isNaN(s.stop))
+        .sort((a, b) => a.stop - b.stop);
+    }
+    this._editingStops = false;
   }
 
   _computeLabel = (s) => LABELS[s.name] || s.name;
@@ -266,14 +312,14 @@ class DomHouseEnergyHorseshoeEditor extends LitElement {
     const o = {};
     if (v.entity) o.entity = v.entity;
     if (v.unit) o.unit = v.unit;
-    if (v.decimals != null) o.decimals = v.decimals;
+    if (v.decimals != null && v.decimals !== "") o.decimals = Number(v.decimals);
     if (withIcon && v.icon) o.icon = v.icon;
     if (v.tap_action && v.tap_action !== "more-info") o.tap_action = { action: v.tap_action };
     return o;
   }
 
   _setEnt(idx, withIcon, ev) {
-    const ents = [...(this._config.entities || [])];
+    const ents = [...(this._config.entities || [])].map((e) => (typeof e === "string" ? { entity: e } : { ...e }));
     while (ents.length < 3) ents.push({});
     ents[idx] = this._buildEnt(ev.detail.value, withIcon);
     while (ents.length > 1 && !ents[ents.length - 1].entity) ents.pop();
@@ -302,7 +348,7 @@ class DomHouseEnergyHorseshoeEditor extends LitElement {
 
   _stopChange(i, field, value) {
     const arr = this._stopsArr.map((s) => ({ ...s }));
-    arr[i][field] = field === "stop" ? Number(value) : value;
+    arr[i][field] = field === "stop" ? (value === "" ? 0 : Number(value)) : value;
     this._stopsArr = arr;
     this._writeStops();
   }
@@ -316,15 +362,19 @@ class DomHouseEnergyHorseshoeEditor extends LitElement {
     this._writeStops();
   }
   _writeStops() {
+    this._editingStops = true;
     const obj = {};
-    [...this._stopsArr].sort((a, b) => a.stop - b.stop).forEach((s) => { obj[s.stop] = s.color; });
+    [...this._stopsArr]
+      .filter((s) => !isNaN(s.stop))
+      .sort((a, b) => a.stop - b.stop)
+      .forEach((s) => { obj[s.stop] = s.color; });
     this._emit({ ...this._config, color_stops: obj });
   }
 
   render() {
     if (!this.hass || !this._config) return html``;
     const c = this._config;
-    const ents = c.entities || [];
+    const ents = (c.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e));
     const e0 = ents[0] || {}, e1 = ents[1] || {}, e2 = ents[2] || {};
     const tap = (e) => (e.tap_action && e.tap_action.action) || "more-info";
     const h = c.horseshoe || {}, sc = c.scale || {};
@@ -431,14 +481,20 @@ class DomHouseEnergyHorseshoeEditor extends LitElement {
 
 /* ============================ REGISTRAZIONE ============================ */
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "domhouse-energy-horseshoe",
-  name: "DomHouse Energy Horseshoe",
-  description: "Ferro di cavallo per la produzione fotovoltaica (DomHouse.it).",
-  preview: false,
-  documentationURL: "https://github.com/SalvatoreITA/DomHouse-Energy-Horseshoe-Card/",
-});
+if (!window.customCards.some((c) => c.type === "domhouse-energy-horseshoe")) {
+  window.customCards.push({
+    type: "domhouse-energy-horseshoe",
+    name: "DomHouse Energy Horseshoe",
+    description: "Ferro di cavallo per la produzione fotovoltaica (DomHouse.it).",
+    preview: false,
+    documentationURL: "https://github.com/SalvatoreITA/DomHouse-Energy-Horseshoe-Card/",
+  });
+}
 
-customElements.define("domhouse-energy-horseshoe", DomHouseEnergyHorseshoe);
-customElements.define("domhouse-energy-horseshoe-editor", DomHouseEnergyHorseshoeEditor);
-console.info("%c DOMHOUSE-ENERGY-HORSESHOE %c v0.4.0 ", "background:#2a9d8f;color:#fff;border-radius:3px 0 0 3px", "color:#2a9d8f");
+if (!customElements.get("domhouse-energy-horseshoe")) {
+  customElements.define("domhouse-energy-horseshoe", DomHouseEnergyHorseshoe);
+}
+if (!customElements.get("domhouse-energy-horseshoe-editor")) {
+  customElements.define("domhouse-energy-horseshoe-editor", DomHouseEnergyHorseshoeEditor);
+}
+console.info("%c DOMHOUSE-ENERGY-HORSESHOE %c v0.4.2 ", "background:#2a9d8f;color:#fff;border-radius:3px 0 0 3px", "color:#2a9d8f");
